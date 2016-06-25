@@ -1,0 +1,491 @@
+/*
+*	 Black Ops 2 - GSC Studio by iMCSx
+*
+*	 Creator : Administrator
+*	 Project : Game _ RayGun Fight
+*    Mode : Multiplayer
+*	 Date : 2016/06/21 - 10:20:58	
+*
+*/	
+
+#include maps\mp\_utility;
+#include common_scripts\utility;
+#include maps\mp\gametypes\_hud_util;
+#include maps\mp\gametypes\_hud_message;
+
+init()
+{
+	thread onPlayerConnect();
+	thread onPlayerConnected();
+
+	thread globalVariables();
+	
+	thread checkIfAllDead();
+	thread createGameText();
+
+	
+	//The variables used for monitoring kills and damage
+	level.onPlayerKilled = ::onPlayerKilled;
+	level.onPlayerDamage = ::onPlayerDamage;
+
+	//PreCache Items
+}
+
+onPlayerConnect()
+{
+	for(;;)
+	{
+		level waittill( "connecting", player );
+		
+		player thread onPlayerSpawned();
+		player thread playerVariables();
+	}
+}
+
+onPlayerConnected()
+{
+	for(;;)
+	{
+		level waittill( "connected", player );
+		player [[level.autoassign]]("allies");
+		player thread setupGame();
+		player thread welcomeMessage();
+	}
+}
+
+onPlayerSpawned()
+{
+	for(;;)
+	{
+		self waittill( "spawned_player" );
+
+		if( self.isZombie == false )
+		{
+			if( self.pers["team"] == "allies" )
+			{
+				self thread humanSettings();
+			}
+			else if( self.pers["team"] == "axis" )
+			{
+				self.isZombie = false;
+				self ChangeMyShittyTeam("allies");
+				self thread humanSettings();
+			}
+		}
+		else if( self.isZombie == true )
+		{
+			if( self.pers["team"] == "axis" )
+			{
+				self thread zombieSettings();
+			}
+			else if( self.pers["team"] != "axis" )
+			{
+				self.isZombie = true;
+				self ChangeMyShittyTeam("axis");
+			}
+		}
+	}
+}
+
+welcomeMessage()
+{
+    notifyData = spawnstruct();
+    notifyData.titleText = "^7aKrooKlyNa's GameMod ^1Zombie Apocalypse"; //Line 1
+    notifyData.glowColor = (0.04, 0.66, 0.89); //RGB Color array divided by 100
+    notifyData.duration = 10; //Change Duration
+    notifyData.font = "objective"; //font
+    notifyData.hideWhenInMenu = false;
+    self thread maps\mp\gametypes\_hud_message::notifyMessage(notifyData);
+}
+
+onPlayerDamage( eInflictor, attacker, iDamage, sMeansOfDeath, sWeapon )
+{
+	if( attacker.isZombie == false && attacker.pers["team"] == "allies" )
+	{
+		if( self.isZombie == true && self.pers["team"] == "axis" && sWeapon != "minigun_mp" ) attacker thread addMoney( iDamage * level.variable["cash_multiplier"] );
+	}
+	else if( attacker.isZombie == true && attacker.pers["team"] == "axis" )
+	{
+		if( sWeapon == "hatchet_mp" ) iDamage = 650;
+	}
+	return iDamage;
+}
+
+onPlayerKilled( eInflictor, attacker, iDamage, sMeansOfDeath, sWeapon )
+{
+	if( level.variable["zombies_released"] == 1 )
+	{
+		if( self.pers["team"] == "allies" && self.isZombie == false && sMeansOfDeath != "MOD_SUICIDE" )
+		{
+			self thread changeToZombie();
+		}
+		else if( self.pers["team"] == "axis" && self.isZombie == true )
+		{
+			MagicBullet( "tabun_gas_mp", self.origin, self.origin, self );
+		}
+	}
+}
+
+
+globalVariables()
+{
+	//Variables
+	level.variable = [];
+	level.variable["game_ready"] = 0;
+	level.variable["zombies_released"] = 0;
+	level.variable["cash_multiplier"] = 100;
+	level.variable["last_survivor"] = 0;
+	setDvar( "scr_disable_weapondrop", 1 );
+	level.variable["dead_persons"] = 0;
+	level.variable["match_ended"] = 0;
+	level.variable["dead_people"] = [];
+	level.variable["time_limit"] = 600;
+	
+	level.prematchPeriod = 0;
+
+	
+	
+	setExpFog( 200, 320, 0, 0, 0, 0 );
+}
+
+playerVariables()
+{
+	//Variables
+	if( self isHost() ) self.variable["cash"] = 200;
+	else self.variable["cash"] = 100;
+	self.variable["zombie_kills"] = 0;
+
+	
+	//Hud Elements
+	self.displayCash = NewClientHudElem( self );
+	self.displayCash.alpha = 0;
+	self.displayCash.font = "objective";
+	self.displayCash.fontscale = 1.9;
+	self.displayCash.x = 550;
+	self.displayCash.y = 300;
+	self.displayCash.archived = true;
+	self.displayCash.color = ( 1, 1, 0 );
+	self.displayCash.alignX = "right";
+	self.displayCash.alignY = "middle";
+	self.displayCash.horzAlign = "fullscreen";
+	self.displayCash.vertAlign = "fullscreen";
+	self.displayCash setText( "Money: " + self.variable["cash"] );
+	
+	//Threads
+	self thread createHealth();
+}
+
+setupGame()
+{
+	if( self.pers["team"] != "allies" )
+	{
+		self [[level.allies]]();
+		wait 0.2;
+	}
+	else if( self.pers["team"] == "allies" )
+	{
+		wait 0.2;
+	}
+	self.isZombie = false;
+}
+
+checkIfAllDead()
+{
+	for(;;)
+	{
+		wait 1.0;
+		if( level.variable["zombies_released"] == 1 && level.playerCount["allies"] == 1 && level.variable["last_survivor"] == 0 )
+		{
+			for( i = 0;i < level.players.size;i++ )
+			{
+				wait 0.05;
+				if( level.players[i].isZombie == false && level.players[i].pers["team"] == "allies" )
+				{
+					level.variable["last_survivor"] = 1;
+					
+					break;
+				}
+			}
+		}
+		else if( level.variable["zombies_released"] == 1 && level.playerCount["allies"] == 0 )
+		{
+			wait 1.0;
+			level thread CreateCredits( "axis", "Fuck Humans Have Been Eliminated" );
+			level notify( "match_ended" );
+			break;
+		}
+	}
+}
+
+
+
+
+createGameText()
+{
+	wait( level.prematchPeriod );
+
+	level.variable["game_ready"] = 1;
+	
+	level.ZombieText = createServerFontString( "extrabig", 1.8 );
+	level.ZombieText setPoint( "CENTER", "CENTER", 0, -40 );
+	level.ZombieText.color = ( 1, 0, 0 );
+	level.ZombieText.sort = 1001;
+	level.zombieText setText( "Zombie Apocalypse Starting in" );
+	level.ZombieTimer = createServerFontString( "extrabig", 2.3 );
+	level.ZombieTimer setPoint( "CENTER", "CENTER", 0, 0 );
+	level.ZombieTimer.color = ( 1, 1, 0 );
+	level.ZombieTimer.sort = 1001;
+	level.ZombieTimer maps\mp\gametypes\_hud::fontPulseInit();
+
+	for( i = 45;i > 0;i-- )
+	{
+		level.ZombieTimer setValue( i );
+		level.ZombieTimer thread maps\mp\gametypes\_hud::fontPulse( level );
+		wait 1;
+	}
+
+	level.ZombieTimer destroyElem();
+	level.ZombieText setText( "Zombies Released" );
+	level.ZombieText fadeOverTime( 3.0 );
+	level.ZombieText.alpha = 0;
+
+	wait( 3.0 );
+
+	level.ZombieText destroyElem();
+	
+	randomZombie = randomInt( level.players.size );
+	randomZombie2 = randomInt( level.players.size );
+	
+	if( level.players.size <= 4 )
+	{
+		level.players[randomZombie] thread changeToZombie();
+	}
+	else if( level.players.size >= 5 )
+	{
+		if( level.players[randomZombie] == level.players[randomZombie2] ) randomZombie = randomInt( level.players.size );
+		level.players[randomZombie] thread changeToZombie();
+		level.players[randomZombie2] thread changeToZombie();
+	}
+	level.variable["zombies_released"] = 1;
+}
+
+changeToZombie()
+{
+	wait 0.01;
+
+	self.isZombie = true;
+	self suicide();
+	self ChangeMyShittyTeam("axis");
+	
+	iPrintlnBold( self.name + "^1 Has been infected" );
+	
+	level.variable["dead_people"][level.variable["dead_persons"]] = self.name;
+	level.variable["dead_persons"]++;
+}
+
+ChangeMyShittyTeam(teamz)
+{
+	self.switching_teams=true;
+	self.joining_team=teamz;
+	self.leaving_team=self.pers["team"];
+	self.pers["team"]=teamz;
+	self.team=teamz;
+	self.pers["weapon"]=undefined;
+	self.pers["savedmodel"]=undefined;
+	self.sessionteam=teamz;
+}
+
+addMoney( points )
+{
+	self endon( "disconnect" );
+
+	self.variable["cash"] = self.variable["cash"] + points;
+	self.displayCash setText( "Money: " + self.variable["cash"] );
+	hud_score = NewClientHudElem( self );
+	hud_score.alpha = 0;
+	hud_score.font = "objective";
+	hud_score.fontscale = 1.9;
+	hud_score.x = 550;
+	hud_score.y = 300;
+	hud_score.archived = true;
+	hud_score.color = ( 1, 1, 0 );
+	hud_score.alignX = "right";
+	hud_score.alignY = "middle";
+	hud_score.horzAlign = "fullscreen";
+	hud_score.vertAlign = "fullscreen";
+	hud_score settext( points );
+	direction = randomint( 340 );
+	hud_score FadeOverTime( .5 );
+	hud_score.alpha = 1;
+	hud_score MoveOverTime( 10 );
+	hud_score.x = cos( direction ) * randomint( 250 );
+	hud_score.y = sin( direction ) * randomint( 250 );
+	wait 1.3;
+	hud_score FadeOverTime( .3 );
+	hud_score.alpha = 0;
+	wait .3;
+	hud_score destroy();
+}
+
+CreateCredits( team, text )
+{
+	iPrintlnBold( " " );
+	iPrintlnBold( " " );
+	iPrintlnBold( " " );
+	iPrintlnBold( " " );
+	level.Picon destroy();
+	level.Micon destroy();
+	level.NukeShader destroy();
+	level.NukeText destroy();
+
+	for( i = 0; i < level.players.size; i++ )
+	{
+		level.players[i] thread monitorFreeze();
+		level.players[i] setClientUIVisibilityFlag( "hud_visible", 0 );
+		level.players[i].healthText destroy();
+		level.players[i].displayCash destroy();
+		level.players[i] maps\mp\gametypes\_globallogic_audio::set_music_on_player( "VICTORY" );
+	}
+	
+	wait 0.5;
+	
+	thread createLine( "In Memory Of:", 4 );
+	wait 0.42;
+	for( i = 0; i < level.variable["dead_people"].size; i++ )
+	{
+		level thread createLine( level.variable["dead_people"][i], 2.5 );
+		wait 1;
+	}
+	wait 2;
+	thread createLine( "Most Money:", 4 );
+	wait 0.42;
+	thread createLine( getHighestMoney(), 2.5 );
+	wait 5;
+	thread createLine( "Made By aKrooKlyNa", 2.5 );
+	wait 0.35;
+	thread createLine( "Sub Me www.youtube.com/user/nicisthatdeal", 2 );
+	wait 8;
+	thread maps\mp\gametypes\_globallogic::endGame( team, text );
+}
+
+createLine( text, size )
+{
+	line = createServerFontString( "objective", size );
+	line setPoint( "CENTER", "CENTER", 0, 400 );
+	line.color = ( 1, 1, 1 );
+	line.sort = 1001;
+	line.glowColor = ( 0, 1, 0 );
+	line.glowAlpha = 1;
+	line setText( text );
+	line moveOverTime( 8.0 );
+	line.y = -400;
+	wait 8;
+	line destroy();
+}
+
+monitorFreeze()
+{
+	for(;;)
+	{
+		self freezeControls( true );
+		self clearLowerMessage( 1.0 );
+		wait 1;
+	}
+}
+
+zombieSettings()
+{
+	self setMoveSpeedScale( 1.6 );
+	self.maxHealth = 650;
+	self.health = 650;
+	self.displayCash.alpha = 0;
+	self thread autoDeleteKnives();
+	self thread autoDeleteTomahawks();
+	self takeAllWeapons();
+	self clearPerks();
+	
+	self giveWeapon( "knife_ballistic_mp" );
+	self giveWeapon( "hatchet_mp" );
+	self switchToWeapon( "knife_ballistic_mp" );
+	
+	self giveMaxAmmo( "hatchet_mp" );
+}
+
+humanSettings()
+{
+	self setMoveSpeedScale( 1.0 );
+	self.maxHealth = 600;
+	self.health = 600;
+	self.displayCash.alpha = 1;
+	self thread autoDeleteKnives();
+	self thread autoDeleteTomahawks();
+	self takeAllWeapons();
+	self clearPerks();
+	self giveWeapon( "knife_mp" );
+	self giveWeapon( "mp7_mp" );
+	self switchToWeapon( "mp7_mp" );
+	self giveMaxAmmo( "mp7_mp" );
+}
+
+createHealth()
+{
+	self.healthBar = self createBar( ( 1, 1, 1 ), 150, 13 );
+	self.healthBar setPoint( "CENTER", "BOTTOM", 150, -4 );
+	self.healthText = self createFontString( "objective", 1.5 );
+	self.healthText setPoint( "CENTER", "BOTTOM", 150, -20 );
+	self.healthText setText( "^1Health" );
+	for(;;)
+	{
+		self.healthBar updateBar( self.health / self.maxhealth );
+		wait 0.001;
+	}
+}
+
+getHighestMoney()
+{
+	players = level.players;
+	winner = undefined;
+	winner2 = undefined;
+	tie = false;
+	for( i = 0;i < players.size;i++ )
+	{
+		if ( !isDefined( players[i].variable["cash"] ) ) continue;
+		if ( !isDefined( winner ) || players[i].variable["cash"] > winner.variable["cash"] )
+		{
+			winner = players[i];
+			tie = false;
+		}
+		else if ( players[i].variable["cash"] == winner.variable["cash"] )
+		{
+			winner2 = players[i];
+			tie = true;
+		}
+	}
+	if ( tie || !isDefined( winner ) ) return winner.name + " and " + winner2.name + " - " + winner.variable["cash"];
+	else return winner.name + " - " + winner.variable["cash"];
+}
+
+autoDeleteTomahawks()
+{
+	self endon("death");
+
+	for(;;)
+	{
+		self waittill( "grenade_fire", tomahawk, grenadeName );
+		if( grenadeName == "hatchet_mp" )
+		{
+			tomahawk waittill( "stationary" );
+			tomahawk delete();
+		}
+	}
+}
+autoDeleteKnives()
+{
+	self endon("death");
+
+	for(;;)
+	{
+		self waittill( "ballistic_knife_stationary", knifeent );
+		knifeent delete();
+	}
+}
